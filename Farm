@@ -1,295 +1,358 @@
--- SERVICES
+--!strict
+-- ================= SERVICES =================
 local Players = game:GetService("Players")
 local PathfindingService = game:GetService("PathfindingService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
--- SETTINGS
-local autoWalk = false
+-- ================= SETTINGS =================
+local autoFarm = false
 local moveMode = "Pathfinding" -- Pathfinding | Walk | Tween
 local tweenSpeed = 20
+local postCollectDelay = 0.2
 local tpIfStuck = true
 
--- INTERNAL
-local currentTaskId = 0
-local humanoid, rootPart
-local activeTween
-local coinBlacklist = {} -- [Instance] = true
-local cachedCoins = {}
+local coinRefreshInterval = 0.5
+local listRefreshInterval = 1
+local blacklistDuration = 20
 
--- ================= GUI =================
+-- ================= CHARACTER =================
+local humanoid: Humanoid?
+local rootPart: BasePart?
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "AutoCoinGui"
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.fromScale(0.35, 0.45)
-frame.Position = UDim2.fromScale(0.03, 0.25)
-frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
-
-local function newButton(text, y)
-	local b = Instance.new("TextButton")
-	b.Size = UDim2.fromScale(0.9, 0.08)
-	b.Position = UDim2.fromScale(0.05, y)
-	b.Text = text
-	b.TextScaled = true
-	b.BackgroundColor3 = Color3.fromRGB(60,60,60)
-	b.Parent = frame
-	return b
+local function onCharacter(char: Model)
+	humanoid = char:WaitForChild("Humanoid") :: Humanoid
+	rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
 end
 
-local toggleBtn = newButton("Auto Walk : OFF", 0.02)
-local modeBtn   = newButton("Mode : Pathfinding", 0.12)
-
--- Tween slider label
-local sliderLabel = Instance.new("TextLabel")
-sliderLabel.Size = UDim2.fromScale(0.9, 0.06)
-sliderLabel.Position = UDim2.fromScale(0.05, 0.22)
-sliderLabel.Text = "Tween Speed : 20"
-sliderLabel.TextScaled = true
-sliderLabel.BackgroundTransparency = 0.8
-sliderLabel.BorderSizePixel = 0
-sliderLabel.BackgroundColor3 = Color3.fromRGB(25,25,25)
-sliderLabel.TextColor3 = Color3.new(1,1,1)
-sliderLabel.Parent = frame
-
--- Slider bar
-local sliderBar = Instance.new("Frame")
-sliderBar.Size = UDim2.fromScale(0.9, 0.03)
-sliderBar.Position = UDim2.fromScale(0.05, 0.29)
-sliderBar.BackgroundColor3 = Color3.fromRGB(80,80,80)
-sliderBar.Parent = frame
-
-local sliderFill = Instance.new("Frame")
-sliderFill.Size = UDim2.fromScale(0.3, 1)
-sliderFill.BackgroundColor3 = Color3.fromRGB(0,170,255)
-sliderFill.Parent = sliderBar
-
--- Coin list
-local listLabel = Instance.new("TextLabel")
-listLabel.Size = UDim2.fromScale(0.9, 0.06)
-listLabel.Position = UDim2.fromScale(0.05, 0.35)
-listLabel.Text = "Coins détectés"
-listLabel.TextScaled = true
-listLabel.BackgroundTransparency = 1
-listLabel.TextColor3 = Color3.new(1,1,1)
-listLabel.Parent = frame
-
-local scrolling = Instance.new("ScrollingFrame")
-scrolling.Size = UDim2.fromScale(0.9, 0.55)
-scrolling.Position = UDim2.fromScale(0.05, 0.42)
-scrolling.CanvasSize = UDim2.new(0,0,0,0)
-scrolling.ScrollBarThickness = 6
-scrolling.Parent = frame
-
-local layout = Instance.new("UIListLayout")
-layout.Padding = UDim.new(0,6)
-layout.Parent = scrolling
-
--- ================= VISUALS =================
-
-local highlight = Instance.new("Highlight")
-highlight.FillColor = Color3.fromRGB(255, 215, 0)
-highlight.OutlineColor = Color3.new(1,1,1)
-highlight.Enabled = false
-highlight.Parent = gui
-
-local pathParts = {}
-local function clearPath()
-	for _, p in ipairs(pathParts) do p:Destroy() end
-	pathParts = {}
-end
-
-local function drawPath(path)
-	clearPath()
-	for _, wp in ipairs(path:GetWaypoints()) do
-		local p = Instance.new("Part")
-		p.Size = Vector3.new(0.4,0.4,0.4)
-		p.Shape = Enum.PartType.Ball
-		p.Material = Enum.Material.Neon
-		p.Color = Color3.fromRGB(0,170,255)
-		p.Anchored = true
-		p.CanCollide = false
-		p.Position = wp.Position
-		p.Parent = workspace
-		table.insert(pathParts, p)
-	end
-end
+if player.Character then onCharacter(player.Character) end
+player.CharacterAdded:Connect(onCharacter)
 
 -- ================= COINS =================
+local cachedCoins: {Instance} = {}
+local coinBlacklist: {[Instance]: number} = {}
 
-local function getObjectPosition(obj)
-	if obj:IsA("Model") then
-		if obj.PrimaryPart then return obj.PrimaryPart.Position end
-		local part = obj:FindFirstChildWhichIsA("BasePart", true)
-		if part then return part.Position end
-		return obj:GetPivot().Position
-	elseif obj:IsA("BasePart") then
-		return obj.Position
-	else
-		return obj:GetPivot().Position
+local function isBlacklisted(coin: Instance): boolean
+	local t = coinBlacklist[coin]
+	if not t then return false end
+	if os.clock() > t then
+		coinBlacklist[coin] = nil
+		return false
 	end
+	return true
+end
+
+local function getPos(obj: Instance): Vector3
+	if obj:IsA("BasePart") then return obj.Position end
+	if obj:IsA("Model") then return obj:GetPivot().Position end
+	return obj:GetPivot().Position
 end
 
 local function refreshCoins()
 	cachedCoins = {}
 	for _, v in ipairs(workspace:GetDescendants()) do
-		if v.Name == "Coin_Server" and not coinBlacklist[v] then
+		if v.Name == "Coin_Server" and not isBlacklisted(v) then
 			table.insert(cachedCoins, v)
 		end
 	end
 end
 
--- GUI LIST UPDATE
-local function refreshCoinList()
-	scrolling:ClearAllChildren()
-	layout.Parent = scrolling
-
-	local ySize = 0
-	for _, coin in ipairs(cachedCoins) do
-		local label = Instance.new("TextLabel")
-		label.Size = UDim2.new(1, -8, 0, 24)
-		label.TextScaled = true
-		label.BackgroundColor3 = Color3.fromRGB(45,45,45)
-		label.TextColor3 = Color3.new(1,1,1)
-		label.Text = coin:GetFullName()
-		label.Parent = scrolling
-		ySize += 30
+-- ================= PATHFINDING =================
+local function computePath(from: Vector3, to: Vector3): Path?
+	local path = PathfindingService:CreatePath({
+		AgentRadius = 2,
+		AgentHeight = 5,
+		AgentCanJump = true,
+	})
+	path:ComputeAsync(from, to)
+	if path.Status == Enum.PathStatus.Success then
+		return path
 	end
-
-	scrolling.CanvasSize = UDim2.new(0,0,0,ySize)
+	return nil
 end
 
--- ================= PATH TARGET =================
+local function pathDistance(path: Path): number
+	local d = 0
+	local w = path:GetWaypoints()
+	for i = 1, #w - 1 do
+		d += (w[i].Position - w[i+1].Position).Magnitude
+	end
+	return d
+end
 
-local function getClosestCoin()
-	local best, bestPath, bestDist = nil, nil, math.huge
+local function getNearestCoinByDistance(): Instance?
+	if not rootPart then return nil end
+
+	local closest
+	local minDist = math.huge
 
 	for _, coin in ipairs(cachedCoins) do
-		local pos = getObjectPosition(coin)
-		local path = PathfindingService:CreatePath()
-		path:ComputeAsync(rootPart.Position, pos)
-
-		if path.Status == Enum.PathStatus.Success then
-			local dist = 0
-			local wps = path:GetWaypoints()
-			for i = 1, #wps-1 do
-				dist += (wps[i].Position - wps[i+1].Position).Magnitude
-			end
-			if dist < bestDist then
-				best, bestPath, bestDist = coin, path, dist
+		if not isBlacklisted(coin) then
+			local dist = (getPos(coin) - rootPart.Position).Magnitude
+			if dist < minDist then
+				minDist = dist
+				closest = coin
 			end
 		end
 	end
 
-	return best, bestPath
+	return closest
 end
+
 
 -- ================= MOVEMENT =================
+local activeTween: Tween?
 
-local function startMovement(taskId)
-	while autoWalk and taskId == currentTaskId do
-		refreshCoins()
-		local coin, path = getClosestCoin()
-		if not coin then break end
+local function moveTo(target: Vector3, path: Path?): boolean
+	if not humanoid or not rootPart then return false end
 
-		local targetPos = getObjectPosition(coin)
-		highlight.Adornee = coin
-		highlight.Enabled = true
-
-		if moveMode == "Pathfinding" and path then
-			drawPath(path)
-			for _, wp in ipairs(path:GetWaypoints()) do
-				if taskId ~= currentTaskId then return end
-				humanoid:MoveTo(wp.Position)
-				task.wait()
-			end
-
-		elseif moveMode == "Walk" then
-			humanoid:MoveTo(targetPos)
-
-		elseif moveMode == "Tween" then
-			if activeTween then activeTween:Cancel() end
-			local dist = (rootPart.Position - targetPos).Magnitude
-			local time = dist / tweenSpeed
-			activeTween = TweenService:Create(
-				rootPart,
-				TweenInfo.new(time, Enum.EasingStyle.Linear),
-				{CFrame = CFrame.new(targetPos)}
-			)
-			activeTween:Play()
-		end
-
-		-- BLACKLIST
-		coinBlacklist[coin] = true
-		clearPath()
+	if moveMode == "Tween" then
+		if activeTween then activeTween:Cancel() end
+		local dist = (rootPart.Position - target).Magnitude
+		local time = math.max(dist / tweenSpeed, 0.05)
+		activeTween = TweenService:Create(
+			rootPart,
+			TweenInfo.new(time, Enum.EasingStyle.Linear),
+			{CFrame = CFrame.new(target)}
+		)
+		activeTween:Play()
+		activeTween.Completed:Wait()
+		return true
 	end
+
+	if moveMode == "Walk" then
+		humanoid:MoveTo(target)
+		humanoid.MoveToFinished:Wait()
+		return true
+	end
+
+	if moveMode == "Pathfinding" and path then
+		for _, wp in ipairs(path:GetWaypoints()) do
+			humanoid:MoveTo(wp.Position)
+			humanoid.MoveToFinished:Wait()
+		end
+		return true
+	end
+
+	return false
 end
 
--- ================= UI LOGIC =================
+-- ================= FARM LOOP =================
+local farmThread
 
-toggleBtn.MouseButton1Click:Connect(function()
-	autoWalk = not autoWalk
-	toggleBtn.Text = autoWalk and "Auto Walk : ON" or "Auto Walk : OFF"
-	currentTaskId += 1
-	if autoWalk then
-		task.spawn(startMovement, currentTaskId)
-	end
+local function startFarm()
+	if farmThread then return end
+	farmThread = task.spawn(function()
+		while autoFarm do
+			refreshCoins()
+			local coin = getNearestCoinByDistance()
+			if not coin then
+				task.wait(0.02)
+				continue
+			end
+
+			local path
+			if moveMode == "Pathfinding" then
+				path = computePath(rootPart.Position, getPos(coin))
+				if not path then
+					coinBlacklist[coin] = os.clock() + blacklistDuration
+					continue
+				end
+			end
+
+			if not coin then
+				task.wait(0.2)
+				continue
+			end
+
+			moveTo(getPos(coin), path)
+			coinBlacklist[coin] = os.clock() + blacklistDuration
+
+			if postCollectDelay > 0 then
+				task.wait(postCollectDelay)
+			end
+		end
+		farmThread = nil
+	end)
+end
+
+local function stopFarm()
+	autoFarm = false
+	if activeTween then activeTween:Cancel() end
+end
+
+-- ================= GUI =================
+local gui = Instance.new("ScreenGui")
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.fromScale(0.35, 0.45)
+main.Position = UDim2.fromScale(0.03, 0.25)
+main.BackgroundColor3 = Color3.fromRGB(25,25,25)
+main.Active = true
+main.Draggable = true
+
+-- Tabs
+local tabBar = Instance.new("Frame", main)
+tabBar.Size = UDim2.fromScale(1, 0.08)
+tabBar.Position = UDim2.fromScale(0,0)
+tabBar.BackgroundTransparency = 1
+
+local farmTabBtn = Instance.new("TextButton", tabBar)
+farmTabBtn.Size = UDim2.fromScale(0.48,1)
+farmTabBtn.Position = UDim2.fromScale(0,0)
+farmTabBtn.Text = "Farm"
+farmTabBtn.TextScaled = true
+
+local listTabBtn = Instance.new("TextButton", tabBar)
+listTabBtn.Size = UDim2.fromScale(0.48,1)
+listTabBtn.Position = UDim2.fromScale(0.52,0)
+listTabBtn.Text = "Liste"
+listTabBtn.TextScaled = true
+
+-- Farm Tab
+local farmTab = Instance.new("Frame", main)
+farmTab.Size = UDim2.fromScale(1,0.92)
+farmTab.Position = UDim2.fromScale(0,0.08)
+farmTab.BackgroundTransparency = 1
+
+local farmBtn = Instance.new("TextButton", farmTab)
+farmBtn.Size = UDim2.fromScale(0.9,0.12)
+farmBtn.Position = UDim2.fromScale(0.05,0.05)
+farmBtn.Text = "Auto Farm : OFF"
+farmBtn.TextScaled = true
+
+local modeBtn = Instance.new("TextButton", farmTab)
+modeBtn.Size = UDim2.fromScale(0.9,0.12)
+modeBtn.Position = UDim2.fromScale(0.05,0.2)
+modeBtn.Text = "Mode : Pathfinding"
+modeBtn.TextScaled = true
+
+-- Sliders for TweenSpeed
+local speedLabel = Instance.new("TextLabel", farmTab)
+speedLabel.Size = UDim2.fromScale(0.9,0.06)
+speedLabel.Position = UDim2.fromScale(0.05,0.35)
+speedLabel.Text = "Tween Speed: "..tweenSpeed
+speedLabel.TextScaled = true
+
+local speedBar = Instance.new("Frame", farmTab)
+speedBar.Size = UDim2.fromScale(0.9,0.03)
+speedBar.Position = UDim2.fromScale(0.05,0.42)
+speedBar.BackgroundColor3 = Color3.fromRGB(80,80,80)
+
+local speedFill = Instance.new("Frame", speedBar)
+speedFill.Size = UDim2.fromScale(0.3,1)
+speedFill.BackgroundColor3 = Color3.fromRGB(0,170,255)
+
+-- Delay slider
+local delayLabel = Instance.new("TextLabel", farmTab)
+delayLabel.Size = UDim2.fromScale(0.9,0.06)
+delayLabel.Position = UDim2.fromScale(0.05,0.48)
+delayLabel.Text = string.format("Delay: %.2fs", postCollectDelay)
+delayLabel.TextScaled = true
+
+local delayBar = Instance.new("Frame", farmTab)
+delayBar.Size = UDim2.fromScale(0.9,0.03)
+delayBar.Position = UDim2.fromScale(0.05,0.55)
+delayBar.BackgroundColor3 = Color3.fromRGB(80,80,80)
+
+local delayFill = Instance.new("Frame", delayBar)
+delayFill.Size = UDim2.fromScale(postCollectDelay,1)
+delayFill.BackgroundColor3 = Color3.fromRGB(255,170,0)
+
+-- Liste Tab
+local listTab = Instance.new("Frame", main)
+listTab.Size = UDim2.fromScale(1,0.92)
+listTab.Position = UDim2.fromScale(0,0.08)
+listTab.BackgroundTransparency = 1
+listTab.Visible = false
+
+local scrolling = Instance.new("ScrollingFrame", listTab)
+scrolling.Size = UDim2.fromScale(0.9,0.85)
+scrolling.Position = UDim2.fromScale(0.05,0.05)
+scrolling.BackgroundColor3 = Color3.fromRGB(30,30,30)
+scrolling.BorderSizePixel = 0
+scrolling.ScrollBarThickness = 6
+
+local layout = Instance.new("UIListLayout", scrolling)
+layout.Padding = UDim.new(0,6)
+
+-- ================= UI LOGIC =================
+farmTabBtn.MouseButton1Click:Connect(function()
+	farmTab.Visible = true
+	listTab.Visible = false
+end)
+
+listTabBtn.MouseButton1Click:Connect(function()
+	farmTab.Visible = false
+	listTab.Visible = true
+end)
+
+farmBtn.MouseButton1Click:Connect(function()
+	autoFarm = not autoFarm
+	farmBtn.Text = autoFarm and "Auto Farm : ON" or "Auto Farm : OFF"
+	if autoFarm then startFarm() else stopFarm() end
 end)
 
 modeBtn.MouseButton1Click:Connect(function()
-	moveMode = (moveMode == "Pathfinding" and "Walk")
-		or (moveMode == "Walk" and "Tween")
-		or "Pathfinding"
-	modeBtn.Text = "Mode : " .. moveMode
+	moveMode = (moveMode == "Pathfinding" and "Walk") or (moveMode == "Walk" and "Tween") or "Pathfinding"
+	modeBtn.Text = "Mode : "..moveMode
 end)
 
--- SLIDER
-local dragging = false
-sliderBar.InputBegan:Connect(function(i)
+-- Slider logic
+local draggingSpeed, draggingDelay = false, false
+
+speedBar.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then draggingSpeed = true end
+end)
+delayBar.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then draggingDelay = true end
+end)
+UserInputService.InputEnded:Connect(function(i)
 	if i.UserInputType == Enum.UserInputType.MouseButton1 then
-		dragging = true
+		draggingSpeed = false
+		draggingDelay = false
 	end
 end)
 
 RunService.RenderStepped:Connect(function()
-	if dragging then
+	if draggingSpeed then
 		local m = player:GetMouse()
-		local x = math.clamp((m.X - sliderBar.AbsolutePosition.X) / sliderBar.AbsoluteSize.X, 0, 1)
-		sliderFill.Size = UDim2.fromScale(x,1)
-		tweenSpeed = math.floor(5 + x * 45)
-		sliderLabel.Text = "Tween Speed : "..tweenSpeed
+		local x = math.clamp((m.X - speedBar.AbsolutePosition.X)/speedBar.AbsoluteSize.X,0,1)
+		speedFill.Size = UDim2.fromScale(x,1)
+		tweenSpeed = math.floor(5 + x*45)
+		speedLabel.Text = "Tween Speed: "..tweenSpeed
+	end
+	if draggingDelay then
+		local m = player:GetMouse()
+		local x = math.clamp((m.X - delayBar.AbsolutePosition.X)/delayBar.AbsoluteSize.X,0,1)
+		delayFill.Size = UDim2.fromScale(x,1)
+		postCollectDelay = math.floor(x*2*100)/100
+		delayLabel.Text = string.format("Delay: %.2fs", postCollectDelay)
 	end
 end)
 
-game:GetService("UserInputService").InputEnded:Connect(function(i)
-	if i.UserInputType == Enum.UserInputType.MouseButton1 then
-		dragging = false
-	end
-end)
-
--- ================= CHARACTER =================
-
-local function onChar(char)
-	humanoid = char:WaitForChild("Humanoid")
-	rootPart = char:WaitForChild("HumanoidRootPart")
-end
-
-if player.Character then onChar(player.Character) end
-player.CharacterAdded:Connect(onChar)
-
--- ================= REFRESH LOOP =================
+-- ================= LIST LOOP =================
 task.spawn(function()
 	while true do
-		task.wait(1)
 		refreshCoins()
-		refreshCoinList()
+		scrolling:ClearAllChildren()
+		for _, coin in ipairs(cachedCoins) do
+			local lbl = Instance.new("TextLabel")
+			lbl.Size = UDim2.new(1,-8,0,24)
+			lbl.BackgroundColor3 = Color3.fromRGB(45,45,45)
+			lbl.TextColor3 = isBlacklisted(coin) and Color3.fromRGB(150,150,150) or Color3.new(1,1,1)
+			lbl.TextScaled = true
+			lbl.Text = coin.Name
+			lbl.Parent = scrolling
+		end
+		task.wait(listRefreshInterval)
 	end
 end)
+
+
+getClosestCoin()
