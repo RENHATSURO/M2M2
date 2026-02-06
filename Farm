@@ -15,7 +15,11 @@ local tweenSpeed = 20
 local postCollectDelay = 0.2
 local tpIfStuck = true
 
-local blacklistDuration = 15
+local blacklistDuration = 6
+
+-- path safety
+local MAX_PATH_DISTANCE = 300
+local LOBBY_IGNORE_DISTANCE = 500
 
 -- anti stuck
 local MAX_TARGET_TIME = 6
@@ -36,7 +40,7 @@ if player.Character then
 end
 
 player.CharacterAdded:Connect(function(char)
-	task.wait(0.1)
+	task.wait(0.2)
 	bindCharacter(char)
 end)
 
@@ -55,7 +59,9 @@ local function isBlacklisted(coin: Instance): boolean
 end
 
 local function getPos(obj: Instance): Vector3
-	if obj:IsA("BasePart") then return obj.Position end
+	if obj:IsA("BasePart") then
+		return obj.Position
+	end
 	return obj:GetPivot().Position
 end
 
@@ -75,24 +81,36 @@ local function getNearestCoin(): Instance?
 	for _, coin in ipairs(cachedCoins) do
 		if not isBlacklisted(coin) then
 			local d = (getPos(coin) - rootPart.Position).Magnitude
-			if d < bestDist then
+			if d < bestDist and d < LOBBY_IGNORE_DISTANCE then
 				bestDist = d
 				best = coin
 			end
 		end
 	end
-
 	return best
 end
 
 -- ================= PATH =================
 local function computePath(from: Vector3, to: Vector3): Path?
-	local path = PathfindingService:CreatePath()
-	path:ComputeAsync(from, to)
-	if path.Status == Enum.PathStatus.Success then
-		return path
+	local dist = (to - from).Magnitude
+	if dist > MAX_PATH_DISTANCE then
+		return nil
 	end
-	return nil
+
+	local ok, path = pcall(function()
+		local p = PathfindingService:CreatePath()
+		p:ComputeAsync(from, to)
+		if p.Status == Enum.PathStatus.Success then
+			return p
+		end
+		return nil
+	end)
+
+	if not ok then
+		return nil
+	end
+
+	return path
 end
 
 -- ================= MOVEMENT =================
@@ -111,7 +129,6 @@ local function safeMoveTo(pos: Vector3, timeout: number): boolean
 		end
 		task.wait(0.05)
 	end
-
 	return false
 end
 
@@ -122,6 +139,7 @@ local function moveTo(target: Vector3, path: Path?): boolean
 		if activeTween then activeTween:Cancel() end
 		local dist = (rootPart.Position - target).Magnitude
 		local time = math.max(dist / tweenSpeed, 0.05)
+
 		activeTween = TweenService:Create(
 			rootPart,
 			TweenInfo.new(time, Enum.EasingStyle.Linear),
@@ -159,66 +177,68 @@ task.spawn(function()
 	while true do
 		task.wait(0.05)
 
-		if not autoFarm or not humanoid or not rootPart then
-			lockedTarget = nil
-			continue
-		end
-
-		refreshCoins()
-
-		if not lockedTarget or isBlacklisted(lockedTarget) then
-			lockedTarget = getNearestCoin()
-			if not lockedTarget then continue end
-			targetStart = os.clock()
-			lastPos = rootPart.Position
-			lastMove = os.clock()
-		end
-
-		local coin = lockedTarget
-		if not coin then continue end
-
-		-- timeout global
-		if os.clock() - targetStart > MAX_TARGET_TIME then
-			coinBlacklist[coin] = os.clock() + blacklistDuration
-			lockedTarget = nil
-			continue
-		end
-
-		-- stuck detection
-		if lastPos and (rootPart.Position - lastPos).Magnitude > STUCK_DISTANCE then
-			lastPos = rootPart.Position
-			lastMove = os.clock()
-		elseif os.clock() - lastMove > STUCK_TIME then
-			if tpIfStuck then
-				rootPart.CFrame = CFrame.new(getPos(coin))
+		local ok, err = pcall(function()
+			if not autoFarm or not humanoid or not rootPart then
+				lockedTarget = nil
+				return
 			end
-			coinBlacklist[coin] = os.clock() + blacklistDuration
-			lockedTarget = nil
-			continue
-		end
 
-		local path
-		if moveMode == "Pathfinding" then
-			path = computePath(rootPart.Position, getPos(coin))
-			if not path then
+			refreshCoins()
+
+			if not lockedTarget or isBlacklisted(lockedTarget) then
+				lockedTarget = getNearestCoin()
+				if not lockedTarget then return end
+				targetStart = os.clock()
+				lastPos = rootPart.Position
+				lastMove = os.clock()
+			end
+
+			local coin = lockedTarget
+			if not coin then return end
+
+			if os.clock() - targetStart > MAX_TARGET_TIME then
 				coinBlacklist[coin] = os.clock() + blacklistDuration
 				lockedTarget = nil
-				continue
+				return
 			end
-		end
 
-		moveTo(getPos(coin), path)
-		coinBlacklist[coin] = os.clock() + blacklistDuration
-		lockedTarget = nil
+			if lastPos and (rootPart.Position - lastPos).Magnitude > STUCK_DISTANCE then
+				lastPos = rootPart.Position
+				lastMove = os.clock()
+			elseif os.clock() - lastMove > STUCK_TIME then
+				if tpIfStuck then
+					rootPart.CFrame = CFrame.new(getPos(coin))
+				end
+				coinBlacklist[coin] = os.clock() + blacklistDuration
+				lockedTarget = nil
+				return
+			end
 
-		if postCollectDelay > 0 then
-			task.wait(postCollectDelay)
+			local path
+			if moveMode == "Pathfinding" then
+				path = computePath(rootPart.Position, getPos(coin))
+				if not path then
+					coinBlacklist[coin] = os.clock() + 2
+					lockedTarget = nil
+					return
+				end
+			end
+
+			moveTo(getPos(coin), path)
+			coinBlacklist[coin] = os.clock() + blacklistDuration
+			lockedTarget = nil
+
+			if postCollectDelay > 0 then
+				task.wait(postCollectDelay)
+			end
+		end)
+
+		if not ok then
+			warn("Autofarm error:", err)
+			task.wait(0.5)
 		end
 	end
 end)
-
--- ================= GUI TOGGLE =================
--- (tu peux garder ton GUI actuel, rien à changer ici)
 
 -- ================= GUI =================
 local gui = Instance.new("ScreenGui")
