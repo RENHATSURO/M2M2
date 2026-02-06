@@ -15,21 +15,30 @@ local tweenSpeed = 20
 local postCollectDelay = 0.2
 local tpIfStuck = true
 
-local coinRefreshInterval = 0.5
-local listRefreshInterval = 1
-local blacklistDuration = 20
+local blacklistDuration = 15
+
+-- anti stuck
+local MAX_TARGET_TIME = 6
+local STUCK_DISTANCE = 1.5
+local STUCK_TIME = 1.2
 
 -- ================= CHARACTER =================
 local humanoid: Humanoid?
 local rootPart: BasePart?
 
-local function onCharacter(char: Model)
+local function bindCharacter(char: Model)
 	humanoid = char:WaitForChild("Humanoid") :: Humanoid
 	rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
 end
 
-if player.Character then onCharacter(player.Character) end
-player.CharacterAdded:Connect(onCharacter)
+if player.Character then
+	bindCharacter(player.Character)
+end
+
+player.CharacterAdded:Connect(function(char)
+	task.wait(0.1)
+	bindCharacter(char)
+end)
 
 -- ================= COINS =================
 local cachedCoins: {Instance} = {}
@@ -47,12 +56,11 @@ end
 
 local function getPos(obj: Instance): Vector3
 	if obj:IsA("BasePart") then return obj.Position end
-	if obj:IsA("Model") then return obj:GetPivot().Position end
 	return obj:GetPivot().Position
 end
 
 local function refreshCoins()
-	cachedCoins = {}
+	table.clear(cachedCoins)
 	for _, v in ipairs(workspace:GetDescendants()) do
 		if v.Name == "Coin_Server" and not isBlacklisted(v) then
 			table.insert(cachedCoins, v)
@@ -60,13 +68,26 @@ local function refreshCoins()
 	end
 end
 
--- ================= PATHFINDING =================
+local function getNearestCoin(): Instance?
+	if not rootPart then return nil end
+	local best, bestDist = nil, math.huge
+
+	for _, coin in ipairs(cachedCoins) do
+		if not isBlacklisted(coin) then
+			local d = (getPos(coin) - rootPart.Position).Magnitude
+			if d < bestDist then
+				bestDist = d
+				best = coin
+			end
+		end
+	end
+
+	return best
+end
+
+-- ================= PATH =================
 local function computePath(from: Vector3, to: Vector3): Path?
-	local path = PathfindingService:CreatePath({
-		AgentRadius = 2,
-		AgentHeight = 5,
-		AgentCanJump = true,
-	})
+	local path = PathfindingService:CreatePath()
 	path:ComputeAsync(from, to)
 	if path.Status == Enum.PathStatus.Success then
 		return path
@@ -74,37 +95,25 @@ local function computePath(from: Vector3, to: Vector3): Path?
 	return nil
 end
 
-local function pathDistance(path: Path): number
-	local d = 0
-	local w = path:GetWaypoints()
-	for i = 1, #w - 1 do
-		d += (w[i].Position - w[i+1].Position).Magnitude
-	end
-	return d
-end
-
-local function getNearestCoinByDistance(): Instance?
-	if not rootPart then return nil end
-
-	local closest
-	local minDist = math.huge
-
-	for _, coin in ipairs(cachedCoins) do
-		if not isBlacklisted(coin) then
-			local dist = (getPos(coin) - rootPart.Position).Magnitude
-			if dist < minDist then
-				minDist = dist
-				closest = coin
-			end
-		end
-	end
-
-	return closest
-end
-
-
 -- ================= MOVEMENT =================
 local activeTween: Tween?
+
+local function safeMoveTo(pos: Vector3, timeout: number): boolean
+	if not humanoid or not rootPart then return false end
+
+	humanoid:MoveTo(pos)
+	local start = os.clock()
+
+	while os.clock() - start < timeout do
+		if not autoFarm then return false end
+		if (rootPart.Position - pos).Magnitude < 4 then
+			return true
+		end
+		task.wait(0.05)
+	end
+
+	return false
+end
 
 local function moveTo(target: Vector3, path: Path?): boolean
 	if not humanoid or not rootPart then return false end
@@ -124,15 +133,15 @@ local function moveTo(target: Vector3, path: Path?): boolean
 	end
 
 	if moveMode == "Walk" then
-		humanoid:MoveTo(target)
-		humanoid.MoveToFinished:Wait()
-		return true
+		return safeMoveTo(target, 2)
 	end
 
 	if moveMode == "Pathfinding" and path then
 		for _, wp in ipairs(path:GetWaypoints()) do
-			humanoid:MoveTo(wp.Position)
-			humanoid.MoveToFinished:Wait()
+			if not autoFarm then return false end
+			if not safeMoveTo(wp.Position, 2) then
+				return false
+			end
 		end
 		return true
 	end
@@ -141,48 +150,75 @@ local function moveTo(target: Vector3, path: Path?): boolean
 end
 
 -- ================= FARM LOOP =================
-local farmThread
+task.spawn(function()
+	local lockedTarget: Instance?
+	local targetStart = 0
+	local lastPos: Vector3?
+	local lastMove = 0
 
-local function startFarm()
-	if farmThread then return end
-	farmThread = task.spawn(function()
-		while autoFarm do
-			refreshCoins()
-			local coin = getNearestCoinByDistance()
-			if not coin then
-				task.wait(0.02)
-				continue
-			end
+	while true do
+		task.wait(0.05)
 
-			local path
-			if moveMode == "Pathfinding" then
-				path = computePath(rootPart.Position, getPos(coin))
-				if not path then
-					coinBlacklist[coin] = os.clock() + blacklistDuration
-					continue
-				end
-			end
+		if not autoFarm or not humanoid or not rootPart then
+			lockedTarget = nil
+			continue
+		end
 
-			if not coin then
-				task.wait(0.2)
-				continue
-			end
+		refreshCoins()
 
-			moveTo(getPos(coin), path)
+		if not lockedTarget or isBlacklisted(lockedTarget) then
+			lockedTarget = getNearestCoin()
+			if not lockedTarget then continue end
+			targetStart = os.clock()
+			lastPos = rootPart.Position
+			lastMove = os.clock()
+		end
+
+		local coin = lockedTarget
+		if not coin then continue end
+
+		-- timeout global
+		if os.clock() - targetStart > MAX_TARGET_TIME then
 			coinBlacklist[coin] = os.clock() + blacklistDuration
+			lockedTarget = nil
+			continue
+		end
 
-			if postCollectDelay > 0 then
-				task.wait(postCollectDelay)
+		-- stuck detection
+		if lastPos and (rootPart.Position - lastPos).Magnitude > STUCK_DISTANCE then
+			lastPos = rootPart.Position
+			lastMove = os.clock()
+		elseif os.clock() - lastMove > STUCK_TIME then
+			if tpIfStuck then
+				rootPart.CFrame = CFrame.new(getPos(coin))
+			end
+			coinBlacklist[coin] = os.clock() + blacklistDuration
+			lockedTarget = nil
+			continue
+		end
+
+		local path
+		if moveMode == "Pathfinding" then
+			path = computePath(rootPart.Position, getPos(coin))
+			if not path then
+				coinBlacklist[coin] = os.clock() + blacklistDuration
+				lockedTarget = nil
+				continue
 			end
 		end
-		farmThread = nil
-	end)
-end
 
-local function stopFarm()
-	autoFarm = false
-	if activeTween then activeTween:Cancel() end
-end
+		moveTo(getPos(coin), path)
+		coinBlacklist[coin] = os.clock() + blacklistDuration
+		lockedTarget = nil
+
+		if postCollectDelay > 0 then
+			task.wait(postCollectDelay)
+		end
+	end
+end)
+
+-- ================= GUI TOGGLE =================
+-- (tu peux garder ton GUI actuel, rien à changer ici)
 
 -- ================= GUI =================
 local gui = Instance.new("ScreenGui")
@@ -353,6 +389,3 @@ task.spawn(function()
 		task.wait(listRefreshInterval)
 	end
 end)
-
-
-getClosestCoin()
