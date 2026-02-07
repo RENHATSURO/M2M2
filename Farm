@@ -17,26 +17,38 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
-local rootPart = character:WaitForChild("HumanoidRootPart")
 
 -- PARAMÈTRES
 local RAY_DISTANCE = 4
 local RAY_HEIGHT_OFFSET = -1.5
 local JUMP_COOLDOWN = 0.5
+
+local humanoid
+local rootPart
 local lastJump = 0
 
 local rayParams = RaycastParams.new()
-rayParams.FilterDescendantsInstances = {character}
 rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
-RunService.RenderStepped:Connect(function()
-	-- ❌ Si le joueur grimpe, on ne fait rien
-	if humanoid:GetState() == Enum.HumanoidStateType.Climbing then
-		return
-	end
+-- Setup à chaque respawn
+local function setupCharacter(character)
+	humanoid = character:WaitForChild("Humanoid")
+	rootPart = character:WaitForChild("HumanoidRootPart")
+	rayParams.FilterDescendantsInstances = { character }
+	lastJump = 0
+end
 
+-- Initial + respawn
+if player.Character then
+	setupCharacter(player.Character)
+end
+player.CharacterAdded:Connect(setupCharacter)
+
+RunService.RenderStepped:Connect(function()
+	if not humanoid or not rootPart then return end
+
+	-- ❌ pas d'auto-jump en grimpant
+	if humanoid:GetState() == Enum.HumanoidStateType.Climbing then return end
 	if tick() - lastJump < JUMP_COOLDOWN then return end
 	if humanoid.FloorMaterial == Enum.Material.Air then return end
 
@@ -45,38 +57,32 @@ RunService.RenderStepped:Connect(function()
 
 	local result = workspace:Raycast(rayOrigin, rayDirection, rayParams)
 
-	if result then
-		local hitPart = result.Instance
-		if hitPart and hitPart.CanCollide then
-			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-			lastJump = tick()
-		end
+	if result and result.Instance and result.Instance.CanCollide then
+		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+		lastJump = tick()
 	end
 end)
+
 
 --=========AUTO WALK IF IDLE============--
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
-local rootPart = character:WaitForChild("HumanoidRootPart")
 
 -- PARAMÈTRES
 local IDLE_TIME = 5
-local MOVE_DISTANCE = 10 -- distance à parcourir
+local MOVE_DISTANCE = 10
 local WALL_DETECTION_DISTANCE = 3
 local POSITION_EPSILON = 0.15
 
--- Variables
-local lastPosition = rootPart.Position
+local humanoid
+local rootPart
+local lastPosition
 local idleTimer = 0
 local isAutoMoving = false
 
--- Raycast params
 local rayParams = RaycastParams.new()
-rayParams.FilterDescendantsInstances = {character}
 rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
 -- Direction aléatoire
@@ -85,7 +91,7 @@ local function getRandomDirection()
 	return Vector3.new(math.cos(angle), 0, math.sin(angle))
 end
 
--- Vérifie mur devant
+-- Mur devant ?
 local function isWallAhead(direction)
 	local result = workspace:Raycast(
 		rootPart.Position,
@@ -95,8 +101,25 @@ local function isWallAhead(direction)
 	return result and result.Instance and result.Instance.CanCollide
 end
 
+-- Setup à chaque respawn
+local function setupCharacter(character)
+	humanoid = character:WaitForChild("Humanoid")
+	rootPart = character:WaitForChild("HumanoidRootPart")
+	lastPosition = rootPart.Position
+	idleTimer = 0
+	isAutoMoving = false
+	rayParams.FilterDescendantsInstances = { character }
+end
+
+if player.Character then
+	setupCharacter(player.Character)
+end
+player.CharacterAdded:Connect(setupCharacter)
+
 RunService.Heartbeat:Connect(function(dt)
-	-- Détection de mouvement
+	if not humanoid or not rootPart then return end
+
+	-- Détection mouvement
 	if (rootPart.Position - lastPosition).Magnitude > POSITION_EPSILON then
 		idleTimer = 0
 		isAutoMoving = false
@@ -106,7 +129,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 	lastPosition = rootPart.Position
 
-	-- Joueur immobile trop longtemps
+	-- AFK détecté
 	if idleTimer >= IDLE_TIME and not isAutoMoving then
 		isAutoMoving = true
 		idleTimer = 0
@@ -114,27 +137,18 @@ RunService.Heartbeat:Connect(function(dt)
 		task.spawn(function()
 			local direction = getRandomDirection()
 
-			-- Cherche une direction libre
 			for i = 1, 8 do
-				if not isWallAhead(direction) then
-					break
-				end
+				if not isWallAhead(direction) then break end
 				direction = getRandomDirection()
 			end
 
-			-- Position cible
-			local targetPosition = rootPart.Position + direction.Unit * MOVE_DISTANCE
-
-			-- Force le déplacement
-			humanoid:MoveTo(targetPosition)
-
-			-- Attends la fin ou timeout
-			local finished = humanoid.MoveToFinished:Wait()
-
+			humanoid:MoveTo(rootPart.Position + direction.Unit * MOVE_DISTANCE)
+			humanoid.MoveToFinished:Wait()
 			isAutoMoving = false
 		end)
 	end
 end)
+
 
 
 
