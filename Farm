@@ -12,6 +12,49 @@ game.Players.PlayerAdded:Connect(function(player)
         player:Kick("This is a private script, You're not allowed in. Ask the owner for a whitelist.")
     end
 end)
+--==============AUTOJUMP===============--
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+-- Paramètres
+local RAY_DISTANCE = 4
+local RAY_HEIGHT_OFFSET = -1.5 -- 🔽 plus bas (ajuste si besoin)
+local JUMP_COOLDOWN = 0.5
+local lastJump = 0
+
+local rayParams = RaycastParams.new()
+rayParams.FilterDescendantsInstances = {character}
+rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+RunService.RenderStepped:Connect(function()
+	if tick() - lastJump < JUMP_COOLDOWN then return end
+	if humanoid.FloorMaterial == Enum.Material.Air then return end
+
+	-- Position du ray légèrement plus basse
+	local rayOrigin = rootPart.Position + Vector3.new(0, RAY_HEIGHT_OFFSET, 0)
+	local rayDirection = rootPart.CFrame.LookVector * RAY_DISTANCE
+
+	local result = workspace:Raycast(rayOrigin, rayDirection, rayParams)
+
+	if result then
+		local hitPart = result.Instance
+		if hitPart and hitPart.CanCollide then
+			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+			lastJump = tick()
+		end
+	end
+end)
+
+
+
+
+
+
 --!strict
 -- ================= SERVICES =================
 local Players = game:GetService("Players")
