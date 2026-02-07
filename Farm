@@ -21,9 +21,9 @@ local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
--- Paramètres
+-- PARAMÈTRES
 local RAY_DISTANCE = 4
-local RAY_HEIGHT_OFFSET = -1.5 -- 🔽 plus bas (ajuste si besoin)
+local RAY_HEIGHT_OFFSET = -1.5
 local JUMP_COOLDOWN = 0.5
 local lastJump = 0
 
@@ -32,10 +32,14 @@ rayParams.FilterDescendantsInstances = {character}
 rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
 RunService.RenderStepped:Connect(function()
+	-- ❌ Si le joueur grimpe, on ne fait rien
+	if humanoid:GetState() == Enum.HumanoidStateType.Climbing then
+		return
+	end
+
 	if tick() - lastJump < JUMP_COOLDOWN then return end
 	if humanoid.FloorMaterial == Enum.Material.Air then return end
 
-	-- Position du ray légèrement plus basse
 	local rayOrigin = rootPart.Position + Vector3.new(0, RAY_HEIGHT_OFFSET, 0)
 	local rayDirection = rootPart.CFrame.LookVector * RAY_DISTANCE
 
