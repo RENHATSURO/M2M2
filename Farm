@@ -1,3 +1,17 @@
+-- 🔐 WHITELIST DE USER IDS
+-- Ajoute simplement les UserIds ici
+local Whitelist = {
+    [1945414158] = true, -- Exemple joueur 1
+    [7182107181] = true, -- Exemple joueur 2
+    -- Ajoute autant de joueurs que tu veux
+}
+
+-- 🔍 Vérification des joueurs
+game.Players.PlayerAdded:Connect(function(player)
+    if not Whitelist[player.UserId] then
+        player:Kick("This is a private script, You're not allowed in. Ask the owner for a whitelist.")
+    end
+end)
 --!strict
 -- ================= SERVICES =================
 local Players = game:GetService("Players")
