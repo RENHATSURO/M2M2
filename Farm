@@ -20,7 +20,7 @@ local player = Players.LocalPlayer
 
 -- PARAMÈTRES
 local RAY_DISTANCE = 4
-local RAY_HEIGHT_OFFSET = -1.5
+local RAY_HEIGHT_OFFSET = -1
 local JUMP_COOLDOWN = 0.5
 
 local humanoid
