@@ -50,6 +50,88 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+--=========AUTO WALK IF IDLE============--
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+-- PARAMÈTRES
+local IDLE_TIME = 5
+local MOVE_DISTANCE = 10 -- distance à parcourir
+local WALL_DETECTION_DISTANCE = 3
+local POSITION_EPSILON = 0.15
+
+-- Variables
+local lastPosition = rootPart.Position
+local idleTimer = 0
+local isAutoMoving = false
+
+-- Raycast params
+local rayParams = RaycastParams.new()
+rayParams.FilterDescendantsInstances = {character}
+rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+-- Direction aléatoire
+local function getRandomDirection()
+	local angle = math.random() * math.pi * 2
+	return Vector3.new(math.cos(angle), 0, math.sin(angle))
+end
+
+-- Vérifie mur devant
+local function isWallAhead(direction)
+	local result = workspace:Raycast(
+		rootPart.Position,
+		direction.Unit * WALL_DETECTION_DISTANCE,
+		rayParams
+	)
+	return result and result.Instance and result.Instance.CanCollide
+end
+
+RunService.Heartbeat:Connect(function(dt)
+	-- Détection de mouvement
+	if (rootPart.Position - lastPosition).Magnitude > POSITION_EPSILON then
+		idleTimer = 0
+		isAutoMoving = false
+	else
+		idleTimer += dt
+	end
+
+	lastPosition = rootPart.Position
+
+	-- Joueur immobile trop longtemps
+	if idleTimer >= IDLE_TIME and not isAutoMoving then
+		isAutoMoving = true
+		idleTimer = 0
+
+		task.spawn(function()
+			local direction = getRandomDirection()
+
+			-- Cherche une direction libre
+			for i = 1, 8 do
+				if not isWallAhead(direction) then
+					break
+				end
+				direction = getRandomDirection()
+			end
+
+			-- Position cible
+			local targetPosition = rootPart.Position + direction.Unit * MOVE_DISTANCE
+
+			-- Force le déplacement
+			humanoid:MoveTo(targetPosition)
+
+			-- Attends la fin ou timeout
+			local finished = humanoid.MoveToFinished:Wait()
+
+			isAutoMoving = false
+		end)
+	end
+end)
+
 
 
 
