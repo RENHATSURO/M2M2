@@ -1,16 +1,16 @@
 -- 🔐 WHITELIST DE USER IDS
 -- Ajoute simplement les UserIds ici
 local Whitelist = {
-    [1945414158] = true, -- Exemple joueur 1
-    [7182107181] = true, -- Exemple joueur 2
-    -- Ajoute autant de joueurs que tu veux
+	[1945414158] = true, -- Exemple joueur 1
+	[7182107181] = true, -- Exemple joueur 2
+	-- Ajoute autant de joueurs que tu veux
 }
 
 -- 🔍 Vérification des joueurs
 game.Players.PlayerAdded:Connect(function(player)
-    if not Whitelist[player.UserId] then
-        player:Kick("This is a private script, You're not allowed in. Ask the owner for a whitelist.")
-    end
+	if not Whitelist[player.UserId] then
+		player:Kick("This is a private script, You're not allowed in. Ask the owner for a whitelist.")
+	end
 end)
 --==============AUTOJUMP===============--
 local Players = game:GetService("Players")
@@ -171,6 +171,8 @@ local moveMode = "Pathfinding" -- Pathfinding | Walk | Tween
 local tweenSpeed = 20
 local postCollectDelay = 0.2
 local tpIfStuck = true
+local DROP_HEIGHT_ALLOW = 6      -- hauteur mini pour accepter une chute
+local DROP_CHECK_DISTANCE = 6    -- distance avant le bord
 
 local blacklistDuration = 6
 
@@ -182,6 +184,26 @@ local LOBBY_IGNORE_DISTANCE = 500
 local MAX_TARGET_TIME = 6
 local STUCK_DISTANCE = 1.5
 local STUCK_TIME = 1.2
+
+local function shouldForceDrop(targetPos: Vector3): boolean
+	if not rootPart then return false end
+
+	local heightDiff = rootPart.Position.Y - targetPos.Y
+	if heightDiff < DROP_HEIGHT_ALLOW then
+		return false
+	end
+
+	-- ray devant → vide ?
+	local rayParams = RaycastParams.new()
+	rayParams.FilterDescendantsInstances = { player.Character }
+	rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+	local origin = rootPart.Position
+	local dir = rootPart.CFrame.LookVector * DROP_CHECK_DISTANCE
+
+	local result = workspace:Raycast(origin, dir, rayParams)
+	return result == nil
+end
 
 -- ================= CHARACTER =================
 local humanoid: Humanoid?
@@ -255,7 +277,14 @@ local function computePath(from: Vector3, to: Vector3): Path?
 	end
 
 	local ok, path = pcall(function()
-		local p = PathfindingService:CreatePath()
+		local p = PathfindingService:CreatePath({
+			AgentRadius = 1.8,
+			AgentHeight = 5,
+			AgentCanJump = true,
+			AgentJumpHeight = 12,
+			AgentMaxSlope = 50,
+			WaypointSpacing = 2,
+		})
 		p:ComputeAsync(from, to)
 		if p.Status == Enum.PathStatus.Success then
 			return p
@@ -312,12 +341,29 @@ local function moveTo(target: Vector3, path: Path?): boolean
 	end
 
 	if moveMode == "Pathfinding" and path then
-		for _, wp in ipairs(path:GetWaypoints()) do
+		local waypoints = path:GetWaypoints()
+
+		for i, wp in ipairs(waypoints) do
 			if not autoFarm then return false end
-			if not safeMoveTo(wp.Position, 2) then
+
+			local targetPos = wp.Position
+
+			-- anticipation angle
+			if i < #waypoints then
+				local nextPos = waypoints[i + 1].Position
+				local dir = (nextPos - targetPos).Unit
+				targetPos += dir * 1.5
+			end
+
+			if wp.Action == Enum.PathWaypointAction.Jump then
+				humanoid.Jump = true
+			end
+
+			if not safeMoveTo(targetPos, 2.5) then
 				return false
 			end
 		end
+
 		return true
 	end
 
@@ -374,11 +420,19 @@ task.spawn(function()
 			local path
 			if moveMode == "Pathfinding" then
 				path = computePath(rootPart.Position, getPos(coin))
+
+				-- fallback chute volontaire
+				if not path and shouldForceDrop(getPos(coin)) then
+					humanoid:MoveTo(getPos(coin))
+					return
+				end
+
 				if not path then
 					coinBlacklist[coin] = os.clock() + 2
 					lockedTarget = nil
 					return
 				end
+
 			end
 
 			moveTo(getPos(coin), path)
