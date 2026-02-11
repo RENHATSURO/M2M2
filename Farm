@@ -1,8 +1,8 @@
 -- 🔐 WHITELIST DE USER IDS
 -- Ajoute simplement les UserIds ici
 local Whitelist = {
-	[1945414158] = true, -- Exemple joueur 1
-	[7182107181] = true, -- Exemple joueur 2
+	[1] = true, -- Exemple joueur 1
+	[2] = true, -- Exemple joueur 2
 	-- Ajoute autant de joueurs que tu veux
 }
 
