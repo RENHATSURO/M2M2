@@ -65,89 +65,89 @@ end)
 
 
 --=========AUTO WALK IF IDLE============--
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+--local Players = game:GetService("Players")
+--local RunService = game:GetService("RunService")
 
-local player = Players.LocalPlayer
+--local player = Players.LocalPlayer
 
 -- PARAMÈTRES
-local IDLE_TIME = 5
-local MOVE_DISTANCE = 10
-local WALL_DETECTION_DISTANCE = 3
-local POSITION_EPSILON = 0.15
+--local IDLE_TIME = 5
+--local MOVE_DISTANCE = 10
+--local WALL_DETECTION_DISTANCE = 3
+--local POSITION_EPSILON = 0.15
 
-local humanoid
-local rootPart
-local lastPosition
-local idleTimer = 0
-local isAutoMoving = false
+--local humanoid
+--local rootPart
+--local lastPosition
+--local idleTimer = 0
+--local isAutoMoving = false
 
-local rayParams = RaycastParams.new()
-rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+--local rayParams = RaycastParams.new()
+--rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
 -- Direction aléatoire
-local function getRandomDirection()
-	local angle = math.random() * math.pi * 2
-	return Vector3.new(math.cos(angle), 0, math.sin(angle))
-end
+--local function getRandomDirection()
+--	local angle = math.random() * math.pi * 2
+--	return Vector3.new(math.cos(angle), 0, math.sin(angle))
+--end
 
 -- Mur devant ?
-local function isWallAhead(direction)
-	local result = workspace:Raycast(
-		rootPart.Position,
-		direction.Unit * WALL_DETECTION_DISTANCE,
-		rayParams
-	)
-	return result and result.Instance and result.Instance.CanCollide
-end
+--local function isWallAhead(direction)
+--	local result = workspace:Raycast(
+--		rootPart.Position,
+--		direction.Unit * WALL_DETECTION_DISTANCE,
+--		rayParams
+--	)
+--	return result and result.Instance and result.Instance.CanCollide
+--end
 
 -- Setup à chaque respawn
-local function setupCharacter(character)
-	humanoid = character:WaitForChild("Humanoid")
-	rootPart = character:WaitForChild("HumanoidRootPart")
-	lastPosition = rootPart.Position
-	idleTimer = 0
-	isAutoMoving = false
-	rayParams.FilterDescendantsInstances = { character }
-end
+--local function setupCharacter(character)
+--	humanoid = character:WaitForChild("Humanoid")
+--	rootPart = character:WaitForChild("HumanoidRootPart")
+--	lastPosition = rootPart.Position
+--	idleTimer = 0
+--	isAutoMoving = false
+--	rayParams.FilterDescendantsInstances = { character }
+--end
+--
+--if player.Character then
+--	setupCharacter(player.Character)
+--end
+--player.CharacterAdded:Connect(setupCharacter)
 
-if player.Character then
-	setupCharacter(player.Character)
-end
-player.CharacterAdded:Connect(setupCharacter)
+--RunService.Heartbeat:Connect(function(dt)
+--	if not humanoid or not rootPart then return end
 
-RunService.Heartbeat:Connect(function(dt)
-	if not humanoid or not rootPart then return end
-
-	-- Détection mouvement
-	if (rootPart.Position - lastPosition).Magnitude > POSITION_EPSILON then
-		idleTimer = 0
-		isAutoMoving = false
-	else
-		idleTimer += dt
-	end
-
-	lastPosition = rootPart.Position
-
-	-- AFK détecté
-	if idleTimer >= IDLE_TIME and not isAutoMoving then
-		isAutoMoving = true
-		idleTimer = 0
-
-		task.spawn(function()
-			local direction = getRandomDirection()
-
-			for i = 1, 8 do
-				if not isWallAhead(direction) then break end
-				direction = getRandomDirection()
-			end
-
-			humanoid:MoveTo(rootPart.Position + direction.Unit * MOVE_DISTANCE)
-			humanoid.MoveToFinished:Wait()
-			isAutoMoving = false
-		end)
-	end
-end)
+--	-- Détection mouvement
+--	if (rootPart.Position - lastPosition).Magnitude > POSITION_EPSILON then
+--		idleTimer = 0
+--		isAutoMoving = false
+--	else
+--		idleTimer += dt
+--	end
+--
+--	lastPosition = rootPart.Position
+--
+--	-- AFK détecté
+--	if idleTimer >= IDLE_TIME and not isAutoMoving then
+--		isAutoMoving = true
+--		idleTimer = 0
+--
+--		task.spawn(function()
+--			local direction = getRandomDirection()
+--
+--			for i = 1, 8 do
+--				if not isWallAhead(direction) then break end
+--				direction = getRandomDirection()
+--			end
+--
+--			humanoid:MoveTo(rootPart.Position + direction.Unit * MOVE_DISTANCE)
+--			humanoid.MoveToFinished:Wait()
+--			isAutoMoving = false
+--		end)
+--	end
+--end)
 
 
 
