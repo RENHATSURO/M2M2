@@ -611,13 +611,28 @@ connect(RunService.Heartbeat, function(dt)
 	jumpRayParams.FilterDescendantsInstances = { character :: Model }
 
 	-- Auto Jump
-	if settings.AutoJump and running and hum.FloorMaterial ~= Enum.Material.Air and hum:GetState() ~= Enum.HumanoidStateType.Climbing then
-		local origin = hrp.Position + Vector3.new(0, 2, 0)
-		local result = workspace:Raycast(origin, hrp.CFrame.LookVector * 4, jumpRayParams)
-		if result and result.Instance and result.Instance.CanCollide then
-			hum:ChangeState(Enum.HumanoidStateType.Jumping)
+	if settings.AutoJump and running then
+		if hum 
+			and hrp 
+			and hum.FloorMaterial ~= Enum.Material.Air
+			and hum.MoveDirection.Magnitude > 0.1 then
+
+			local moveDir = hum.MoveDirection.Unit
+			local origin = hrp.Position + Vector3.new(0, -1, 0)
+
+			local rayParams = RaycastParams.new()
+			rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+			rayParams.FilterDescendantsInstances = {character}
+
+			local result = workspace:Raycast(origin, moveDir * 4, rayParams)
+
+			if result and result.Instance and result.Instance.CanCollide then
+				hum.Jump = true
+			end
 		end
 	end
+
+
 
 	-- Auto Walk: idle XZ > 5s
 	if settings.AutoWalk and running and movementMode ~= "Pathfinding" then
@@ -698,8 +713,8 @@ local function movePathfinding(target: BasePart)
 	end
 
 	local path = PathfindingService:CreatePath({
-		AgentRadius = 5.5,
-		AgentHeight = 6.5,
+		AgentRadius = 2.5,
+		AgentHeight = 3,
 		AgentCanJump = true,
 		AgentCanClimb = true,
 	})
@@ -730,20 +745,42 @@ local function movePathfinding(target: BasePart)
 		if not isCharacterReady() then
 			return false, "Dead"
 		end
+
 		if isManualMoving() then
 			repeat
 				task.wait(0.1)
 			until (not isManualMoving()) or not running or movementMode ~= "Pathfinding"
+
 			if not running or movementMode ~= "Pathfinding" then
 				return false, "Interrupted"
 			end
 		end
 
-		if wp.Action == Enum.PathWaypointAction.Jump then
-			hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		-- ✅ AUTOJUMP INTÉGRÉ PROPREMENT
+		if settings.AutoJump then
+			if wp.Action == Enum.PathWaypointAction.Jump then
+				hum.Jump = true
+			else
+				local rayParams = RaycastParams.new()
+				rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+				rayParams.FilterDescendantsInstances = {character}
+
+				local origin = hrp.Position + Vector3.new(0, 2, 0)
+				local dir = (wp.Position - hrp.Position)
+
+				if dir.Magnitude > 0 then
+					dir = dir.Unit * 4
+					local hit = workspace:Raycast(origin, dir, rayParams)
+					if hit and hit.Instance and hit.Instance.CanCollide then
+						hum.Jump = true
+					end
+				end
+			end
 		end
 
+		-- ✅ MoveTo principal
 		hum:MoveTo(wp.Position)
+
 		local reached = false
 		local finished = false
 
@@ -772,11 +809,11 @@ local function movePathfinding(target: BasePart)
 
 		conn:Disconnect()
 
-
 		if not reached and i < #waypoints then
 			return false, "MoveTo failed"
 		end
 	end
+
 
 	return true, nil
 end
