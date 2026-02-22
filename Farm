@@ -170,7 +170,7 @@ local autoFarm = false
 local moveMode = "Pathfinding" -- Pathfinding | Walk | Tween
 local tweenSpeed = 20
 local postCollectDelay = 0.2
-local tpIfStuck = true
+local tpIfStuck = false
 local DROP_HEIGHT_ALLOW = 6      -- hauteur mini pour accepter une chute
 local DROP_CHECK_DISTANCE = 6    -- distance avant le bord
 
